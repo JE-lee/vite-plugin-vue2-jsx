@@ -38,6 +38,22 @@ Default: `undefined`
 
 A [picomatch pattern](https://github.com/micromatch/picomatch), or array of patterns, which specifies the files to be ignored by the plugin.
 
+### useWorkerThreads
+
+Type: `boolean`
+
+Default: `true`
+
+Enable worker threads for Babel transformation to improve build performance in large projects by utilizing multiple CPU cores.
+
+### workerPoolSize
+
+Type: `number`
+
+Default: `os.cpus().length - 1`
+
+Number of worker threads in the pool. Only applicable when `useWorkerThreads` is `true`.
+
 > See [@vue/babel-preset-jsx](https://github.com/vuejs/jsx-vue2/tree/dev/packages/babel-preset-jsx#readme) for other options.
 
 ## HMR Detection
