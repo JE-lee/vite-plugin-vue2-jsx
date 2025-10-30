@@ -1,0 +1,12 @@
+node_modules/
+playground/
+scripts/
+*.log
+.DS_Store
+coverage/
+.vscode/
+.env
+.idea/
+*.tgz
+src/
+tsconfig*.json

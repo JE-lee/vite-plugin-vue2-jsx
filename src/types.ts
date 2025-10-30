@@ -7,4 +7,10 @@ export interface FilterOptions {
 }
 
 export type Options = VueJSXPresetOptions &
-  FilterOptions & { babelPlugins?: any[] }
+  FilterOptions & { 
+    babelPlugins?: any[]
+    /** Enable worker threads for Babel transformation (default: true) */
+    useWorkerThreads?: boolean
+    /** Number of worker threads in the pool (default: CPU cores - 1) */
+    workerPoolSize?: number
+  }

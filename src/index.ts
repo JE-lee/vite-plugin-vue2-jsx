@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto'
 import path from 'node:path'
-import type { types } from '@babel/core'
 import * as babel from '@babel/core'
 import jsx from '@vue/babel-preset-jsx'
 // @ts-expect-error missing type
@@ -11,6 +9,13 @@ import type { ComponentOptions } from 'vue'
 import type { Plugin } from 'vite'
 
 import { HMR_RUNTIME_ID, hmrRuntimeCode } from './hmrRuntime'
+import {
+  getWorkerPool,
+  terminateWorkerPool,
+  type WorkerTransformResult
+} from './workerPool'
+import { analyzeHotComponents } from './hotAnalysis'
+import { loadTypescriptPlugin } from './loadTypescriptPlugin'
 
 import type { Options } from './types'
 export * from './types'
@@ -41,6 +46,7 @@ function vue2JsxPlugin(options: Options = {}): Plugin {
   let root = ''
   let needHmr = false
   let needSourceMap = true
+  let workerPool: ReturnType<typeof getWorkerPool> | null = null
 
   return {
     name: 'vite:vue2-jsx',
@@ -59,6 +65,17 @@ function vue2JsxPlugin(options: Options = {}): Plugin {
       needHmr = config.command === 'serve' && !config.isProduction
       needSourceMap = config.command === 'serve' || !!config.build.sourcemap
       root = config.root
+      
+      // Initialize worker pool with custom size if provided
+      workerPool = getWorkerPool(options.workerPoolSize)
+    },
+
+    async buildEnd() {
+      // Cleanup worker pool when build ends
+      if (workerPool) {
+        await terminateWorkerPool()
+        workerPool = null
+      }
     },
 
     resolveId(id) {
@@ -87,6 +104,7 @@ function vue2JsxPlugin(options: Options = {}): Plugin {
         include,
         exclude,
         babelPlugins = [],
+        useWorkerThreads = true,
         ...babelPresetOptions
       } = options
 
@@ -96,34 +114,45 @@ function vue2JsxPlugin(options: Options = {}): Plugin {
       // use id for script blocks in Vue SFCs (e.g. `App.vue?vue&type=script&lang.jsx`)
       // use filepath for plain jsx files (e.g. App.jsx)
       if (filter(id) || filter(filepath)) {
-        const plugins = [importMeta]
-        const presets = [
-          [jsx, {
-            compositionAPI: 'native',
-            ...babelPresetOptions
-          }]
-        ]
-        if (id.endsWith('.tsx') || filepath.endsWith('.tsx')) {
-          plugins.push([
-            // @ts-ignore missing type
-            await import('@babel/plugin-transform-typescript').then(
-              (r) => r.default
-            ),
-            // @ts-ignore
-            { isTSX: true, allowExtensions: true, allowDeclareFields: true }
-          ])
+    const isTSX = id.endsWith('.tsx') || filepath.endsWith('.tsx')
+
+    let result: WorkerTransformResult
+        
+        // Use worker threads for transformation if enabled
+        if (useWorkerThreads && workerPool) {
+          try {
+            const workerResult = await workerPool.transform(
+              code,
+              id,
+              isTSX,
+              babelPlugins,
+              babelPresetOptions,
+              needSourceMap
+            )
+            result = workerResult
+          } catch (error) {
+            // Fallback to main thread on worker error
+            console.warn('Worker thread transformation failed, falling back to main thread:', error)
+            result = await transformInMainThread(
+              code,
+              id,
+              isTSX,
+              babelPlugins,
+              babelPresetOptions,
+              needSourceMap
+            )
+          }
+        } else {
+          // Use main thread transformation
+          result = await transformInMainThread(
+            code,
+            id,
+            isTSX,
+            babelPlugins,
+            babelPresetOptions,
+            needSourceMap
+          )
         }
-        // custom babel plugins should put *after* ts plugin
-        plugins.push(...babelPlugins)
-        const result = babel.transformSync(code, {
-          babelrc: false,
-          ast: true,
-          plugins,
-          presets,
-          sourceMaps: needSourceMap,
-          sourceFileName: id,
-          configFile: false
-        })!
 
         if (!ssr && !needHmr) {
           if (!result.code) return
@@ -133,95 +162,21 @@ function vue2JsxPlugin(options: Options = {}): Plugin {
           }
         }
 
-        interface HotComponent {
-          local: string
-          exported: string
-          id: string
-        }
-
-        // check for hmr injection
-        const declaredComponents: { name: string }[] = []
-        const hotComponents: HotComponent[] = []
-        let hasDefault = false
-
-        for (const node of result.ast!.program.body) {
-          if (node.type === 'VariableDeclaration') {
-            const names = parseComponentDecls(node, code)
-            if (names.length) {
-              declaredComponents.push(...names)
-            }
-          }
-
-          if (node.type === 'ExportNamedDeclaration') {
-            if (
-              node.declaration &&
-              node.declaration.type === 'VariableDeclaration'
-            ) {
-              hotComponents.push(
-                ...parseComponentDecls(node.declaration, code).map(
-                  ({ name }) => ({
-                    local: name,
-                    exported: name,
-                    id: getHash(id + name)
-                  })
-                )
-              )
-            } else if (node.specifiers.length) {
-              for (const spec of node.specifiers) {
-                if (
-                  spec.type === 'ExportSpecifier' &&
-                  spec.exported.type === 'Identifier'
-                ) {
-                  const matched = declaredComponents.find(
-                    ({ name }) => name === spec.local.name
-                  )
-                  if (matched) {
-                    hotComponents.push({
-                      local: spec.local.name,
-                      exported: spec.exported.name,
-                      id: getHash(id + spec.exported.name)
-                    })
-                  }
-                }
-              }
-            }
-          }
-
-          if (node.type === 'ExportDefaultDeclaration') {
-            if (node.declaration.type === 'Identifier') {
-              const _name = node.declaration.name
-              const matched = declaredComponents.find(
-                ({ name }) => name === _name
-              )
-              if (matched) {
-                hotComponents.push({
-                  local: node.declaration.name,
-                  exported: 'default',
-                  id: getHash(id + 'default')
-                })
-              }
-            } else if (isDefineComponentCall(node.declaration)) {
-              hasDefault = true
-              hotComponents.push({
-                local: '__default__',
-                exported: 'default',
-                id: getHash(id + 'default')
-              })
-            }
-          }
-        }
+        const { hotComponents, hasDefaultExport } = result
+        let transformedCode = result.code
+        const sourceMap = result.map
 
         if (hotComponents.length) {
-          if (hasDefault && (needHmr || ssr)) {
-            result.code =
-              result.code!.replace(
+          if (hasDefaultExport && (needHmr || ssr)) {
+            transformedCode =
+              transformedCode!.replace(
                 /export default defineComponent/g,
                 `const __default__ = defineComponent`
               ) + `\nexport default __default__`
           }
 
           if (needHmr && !ssr && !/\?vue&type=script/.test(id)) {
-            let code = result.code
+            let code = transformedCode
             let callbackCode = ``
             
             code += `\nimport __VUE_HMR_RUNTIME__ from "${HMR_RUNTIME_ID}"`
@@ -237,7 +192,7 @@ function vue2JsxPlugin(options: Options = {}): Plugin {
               .map((c) => `${c.exported}: __${c.exported}`)
               .join(',')}}) => {${callbackCode}\n})`
 
-            result.code = code
+            transformedCode = code
           }
 
           if (ssr) {
@@ -248,43 +203,71 @@ function vue2JsxPlugin(options: Options = {}): Plugin {
             for (const { local } of hotComponents) {
               ssrInjectCode += `\nssrRegisterHelper(${local}, __moduleId)`
             }
-            result.code += ssrInjectCode
+            transformedCode += ssrInjectCode
           }
         }
 
-        if (!result.code) return
+        if (!transformedCode) return
         return {
-          code: result.code,
-          map: result.map
+          code: transformedCode,
+          map: sourceMap
         }
       }
     }
   }
 }
 
-function parseComponentDecls(node: types.VariableDeclaration, source: string) {
-  const names = []
-  for (const decl of node.declarations) {
-    if (decl.id.type === 'Identifier' && isDefineComponentCall(decl.init)) {
-      names.push({
-        name: decl.id.name
-      })
-    }
+async function transformInMainThread(
+  code: string,
+  id: string,
+  isTSX: boolean,
+  babelPlugins: any[],
+  babelPresetOptions: any,
+  needSourceMap: boolean
+): Promise<WorkerTransformResult> {
+  const plugins = [importMeta]
+  const presets = [
+    [jsx, {
+      compositionAPI: 'native',
+      ...babelPresetOptions
+    }]
+  ]
+  
+  if (isTSX) {
+    const tsPlugin = await loadTypescriptPlugin()
+    plugins.push([
+      tsPlugin,
+      // @ts-ignore
+      { isTSX: true, allowExtensions: true, allowDeclareFields: true }
+    ])
   }
-  return names
-}
+  
+  // custom babel plugins should put *after* ts plugin
+  plugins.push(...babelPlugins)
+  
+  const babelResult = babel.transformSync(code, {
+    babelrc: false,
+    ast: true,
+    plugins,
+    presets,
+    sourceMaps: needSourceMap,
+    sourceFileName: id,
+    configFile: false
+  })!
 
-function isDefineComponentCall(node?: types.Node | null) {
-  return (
-    node &&
-    node.type === 'CallExpression' &&
-    node.callee.type === 'Identifier' &&
-    node.callee.name === 'defineComponent'
+  const { hotComponents, hasDefaultExport } = analyzeHotComponents(
+    babelResult?.ast as any,
+    code,
+    id
   )
-}
 
-function getHash(text: string) {
-  return createHash('sha256').update(text).digest('hex').substring(0, 8)
+  return {
+    id: -1,
+    code: babelResult.code,
+    map: babelResult.map,
+    hotComponents,
+    hasDefaultExport
+  } as WorkerTransformResult
 }
 
 export default vue2JsxPlugin
