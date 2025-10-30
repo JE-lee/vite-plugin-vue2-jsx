@@ -4,7 +4,22 @@
 
 ## 工作流文件
 
-### 1. CI Verification (`.github/workflows/verify.yml`)
+### 1. Test GitHub Actions Setup (`.github/workflows/test-setup.yml`)
+
+**触发条件：**
+- 手动触发（workflow_dispatch）
+- 推送到 `copilot/setup-github-actions-release` 分支（用于测试）
+
+**功能：**
+- 测试 GitHub Actions 基本功能
+- 验证 Node.js 和 pnpm 设置
+- 测试依赖安装
+- 测试构建过程
+- 生成详细的验证摘要
+
+**用途：** 用于验证 GitHub Actions 配置是否正常工作。这是一个测试工作流，可以安全地运行而不会发布任何内容。
+
+### 2. CI Verification (`.github/workflows/verify.yml`)
 
 **触发条件：**
 - 推送到 `main` 或 `release` 分支
@@ -18,7 +33,7 @@
 
 **用途：** 用于验证代码更改不会破坏构建过程，可以在任何分支上运行以确保代码质量。
 
-### 2. Publish to NPM (`.github/workflows/publish-npm.yml`)
+### 3. Publish to NPM (`.github/workflows/publish-npm.yml`)
 
 **触发条件：**
 - 仅在推送到 `release` 分支时触发
@@ -82,6 +97,16 @@
 ## 验证工作流
 
 可以通过以下方式验证工作流配置是否正确：
+
+### 方法 1: 使用测试工作流（推荐）
+
+1. 进入 GitHub 仓库的 Actions 标签页
+2. 选择 "Test GitHub Actions Setup" 工作流
+3. 点击 "Run workflow" 按钮
+4. 选择分支并点击 "Run workflow"
+5. 查看运行结果，所有步骤应该显示绿色勾选标记
+
+### 方法 2: 使用 Pull Request
 
 1. 创建一个 Pull Request 到 `main` 或 `release` 分支
 2. CI Verification 工作流会自动运行
