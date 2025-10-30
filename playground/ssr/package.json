@@ -1,5 +1,5 @@
 {
-  "name": "@vitejs/vue2-jsx-playground-ssr",
+  "name": "@artoo-detoo/vue2-jsx-playground-ssr",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue2": "^1.1.2",
-    "@vitejs/plugin-vue2-jsx": "workspace:*",
+    "@artoo-detoo/plugin-vue2-jsx": "workspace:*",
     "compression": "^1.7.4",
     "cross-env": "^7.0.3",
     "vite": "^3.0.0-beta.9"
