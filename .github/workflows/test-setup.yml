@@ -1,0 +1,77 @@
+name: Test GitHub Actions Setup
+
+# This workflow can be manually triggered to verify GitHub Actions is working
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - copilot/setup-github-actions-release
+
+jobs:
+  test-setup:
+    name: Test GitHub Actions Configuration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Test basic commands
+        run: |
+          echo "✅ GitHub Actions is working!"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Verify Node.js
+        run: |
+          echo "Node.js version: $(node --version)"
+          echo "NPM version: $(npm --version)"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Verify pnpm
+        run: |
+          echo "pnpm version: $(pnpm --version)"
+
+      - name: Test cache setup
+        uses: actions/cache@v3
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-test-cache
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run build
+        run: pnpm run build
+
+      - name: Verify build output
+        run: |
+          echo "📦 Checking build artifacts..."
+          ls -lh dist/
+          echo ""
+          echo "✅ Build completed successfully!"
+
+      - name: Summary
+        run: |
+          echo "🎉 GitHub Actions setup verification completed!"
+          echo ""
+          echo "All checks passed:"
+          echo "  ✅ Checkout working"
+          echo "  ✅ Node.js setup working"
+          echo "  ✅ pnpm setup working"
+          echo "  ✅ Cache setup working"
+          echo "  ✅ Dependencies installation working"
+          echo "  ✅ Build process working"
+          echo ""
+          echo "The GitHub Actions workflows are ready to use!"

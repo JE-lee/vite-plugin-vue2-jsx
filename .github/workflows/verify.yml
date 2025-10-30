@@ -1,0 +1,81 @@
+name: CI Verification
+
+on:
+  push:
+    branches:
+      - release
+      - main
+  pull_request:
+    branches:
+      - main
+      - release
+
+jobs:
+  verify:
+    name: Verify Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build project
+        run: pnpm run build
+
+      - name: Verify build artifacts
+        run: |
+          echo "Checking build artifacts..."
+          if [ ! -f dist/index.cjs ]; then
+            echo "❌ Error: dist/index.cjs not found"
+            exit 1
+          fi
+          echo "✅ dist/index.cjs found"
+
+          if [ ! -f dist/index.mjs ]; then
+            echo "❌ Error: dist/index.mjs not found"
+            exit 1
+          fi
+          echo "✅ dist/index.mjs found"
+
+          if [ ! -f dist/index.d.ts ]; then
+            echo "❌ Error: dist/index.d.ts not found"
+            exit 1
+          fi
+          echo "✅ dist/index.d.ts found"
+
+          echo ""
+          echo "🎉 All build artifacts verified successfully!"
+
+      - name: Check package.json
+        run: |
+          echo "Package information:"
+          node -p "'Name: ' + require('./package.json').name"
+          node -p "'Version: ' + require('./package.json').version"
+          node -p "'License: ' + require('./package.json').license"
